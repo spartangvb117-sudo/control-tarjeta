@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Control de Tarjeta</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:#f3f4f8;color:#1f2937;padding-bottom:76px;min-height:100vh}
+header{background:linear-gradient(135deg,#4f46e5,#7c3aed);color:#fff;padding:20px 16px 26px}
+header h1{font-size:20px; display:flex; justify-content:space-between; align-items:center;}
+header p{font-size:13px;opacity:.85;margin-top:4px}
+#syncStatus{font-size:12px; margin-top:8px; font-weight:600; padding:4px 8px; background:rgba(255,255,255,0.2); border-radius:6px; display:inline-block;}
+main{padding:14px;max-width:620px;margin:auto}
+.section{display:none}
+.section.active{display:block}
+.card{background:#fff;border-radius:14px;padding:16px;margin-bottom:14px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.card h2{font-size:15px;margin-bottom:10px;color:#374151;display:flex;align-items:center;gap:6px;}
+.big{font-size:28px;font-weight:700;color:#4f46e5}
+.muted{font-size:12px;color:#6b7280}
+.row{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+label{display:block;font-size:12px;color:#6b7280;margin-bottom:4px}
+.form-group{margin-top:12px}
+input,select{width:100%;padding:11px;border:1px solid #d1d5db;border-radius:10px;font-size:16px;background:#f9fafb;transition:border-color 0.2s}
+input:focus{outline:none;border-color:#4f46e5;background:#fff}
+button{font:inherit;cursor:pointer}
+.btn{width:100%;margin-top:14px;padding:13px;border:none;border-radius:10px;background:#4f46e5;color:#fff;font-size:16px;font-weight:600;transition:opacity 0.2s}
+.btn:active{opacity:0.8}
+.btn-sm{padding:6px 10px;border:none;border-radius:8px;background:#fee2e2;color:#b91c1c;font-size:12px;font-weight:600}
+.btn-sm-blue{background:#e0e7ff;color:#4338ca;}
+.btn-outline{background:transparent;border:1px solid #ef4444;color:#ef4444}
+.bar{height:8px;background:#e5e7eb;border-radius:4px;margin-top:6px;overflow:hidden}
+.bar div{height:100%;background:linear-gradient(90deg,#818cf8,#4f46e5);border-radius:4px}
+details{border-top:1px solid #f0f0f5;padding:10px 0}
+summary{cursor:pointer;list-style:none}
+summary::-webkit-details-marker{display:none}
+.item{font-size:13px;padding:6px 0 0 4px;color:#374151;display:flex;justify-content:space-between;gap:8px; align-items: flex-start;}
+.tag{display:inline-block;font-size:11px;background:#ede9fe;color:#5b21b6;border-radius:6px;padding:2px 6px;margin-left:4px}
+.pur{padding:12px 0;border-bottom:1px solid #f0f0f5}
+.pur:last-child{border-bottom:none}
+.pur-title{font-weight:600;font-size:15px}
+.text-green {color: #15803d;}
+.comment-text {font-size:11px; color:#9ca3af; font-style:italic; margin-top:2px;}
+nav{position:fixed;bottom:0;left:0;right:0;background:#fff;display:flex;border-top:1px solid #e5e7eb;z-index:10;box-shadow:0 -1px 3px rgba(0,0,0,.05)}
+nav button{flex:1;padding:14px 12px;border:none;background:none;font-size:14px;color:#6b7280;display:flex;flex-direction:column;align-items:center;gap:4px}
+nav button.active{color:#4f46e5;font-weight:600}
+.empty{text-align:center;color:#9ca3af;padding:20px;font-size:14px}
+.hint{background:#eef2ff;color:#3730a3;padding:10px;border-radius:10px;font-size:13px;margin-top:10px}
+.total-row { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px dashed #e5e7eb; margin-top: 8px;}
+.total-row:last-child { border-bottom: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>💳 Control de Tarjeta <div id="syncStatus">☁️ Nube desactivada</div></h1>
+  <p>Compras, cuotas y resúmenes estimados</p>
+</header>
+
+<main>
+  <!-- RESUMEN -->
+  <section id="tab-resumen" class="section active">
+    <div class="card">
+      <h2>Próximo resumen a pagar</h2>
+      <div class="big" id="nextTotal">$0</div>
+      <div class="muted" id="nextDates" style="margin-bottom:12px;"></div>
+      
+      <div style="background:#f9fafb; padding:10px; border-radius:8px;">
+        <div class="total-row">
+          <span class="muted"><b>Deuda Total Actual (Utilizado):</b></span>
+          <span class="muted"><b id="totalDebt" style="color:#1f2937;">$0</b></span>
+        </div>
+        <div class="total-row">
+          <span class="muted">Total pendiente en cuotas futuras:</span>
+          <span class="muted" id="remaining">$0</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Proyección próximos 12 resúmenes</h2>
+      <div id="proj"></div>
+    </div>
+
+    <div class="card">
+      <h2>⚙️ Configuración y Nube</h2>
+      <div class="grid2 form-group">
+        <div>
+          <label>Día de cierre</label>
+          <input type="number" id="closing" min="1" max="28">
+        </div>
+        <div>
+          <label>Día de vencimiento</label>
+          <input type="number" id="due" min="1" max="28">
+        </div>
+      </div>
+      
+      <div class="form-group" style="margin-top:16px; padding-top:16px; border-top:1px solid #f0f0f5;">
+        <label>URL Sincronización (Google Apps Script)</label>
+        <input type="text" id="scriptUrl" placeholder="https://script.google.com/macros/s/..." style="font-size:13px; color:#4b5563;">
+        <div class="hint" style="background:#f3f4f6; color:#4b5563;">Pega aquí el enlace para activar el guardado automático en todos tus dispositivos.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- COMPRAS -->
+  <section id="tab-compras" class="section">
+    
+    <div class="card">
+      <h2>📥 Importar desde el Banco</h2>
+      <p class="muted" style="margin-bottom:12px">Sube el archivo Excel <b>(Saldo_y_Mov_No_Facturado)</b> para cargar los cargos automáticamente.</p>
+      <input type="file" id="fileImport" accept=".xls,.xlsx" style="font-size:14px; padding:8px; width:100%; box-sizing:border-box; background:#fff; border:1px dashed #d1d5db;">
+      <button class="btn" style="background:#10b981;" id="importBtn">Procesar Cartola</button>
+      <div id="importResult" class="hint" style="display:none; margin-top:10px"></div>
+    </div>
+
+    <div class="card">
+      <h2>✏️ Ingreso Manual</h2>
+      
+      <div class="form-group">
+        <label>Descripción del comercio o gasto</label>
+        <input type="text" id="desc" placeholder="Ej: Supermercado, Notebook, Reembolso...">
+      </div>
+
+      <div class="grid2 form-group">
+        <div>
+          <label>Monto total (CLP)</label>
+          <input type="number" id="total" step="1" placeholder="Ej: 50000 o -15000">
+        </div>
+        <div>
+          <label>Cuotas</label>
+          <input type="number" id="cuotas" min="1" max="60" value="1">
+        </div>
+      </div>
+
+      <div class="grid2 form-group">
+        <div>
+          <label>Fecha de compra</label>
+          <input type="date" id="fecha">
+        </div>
+        <div>
+          <label>Comentario (Opcional)</label>
+          <input type="text" id="comentario" placeholder="Ej: Regalo, viaje...">
+        </div>
+      </div>
+
+      <div class="hint" id="preview" style="margin-top:16px;"></div>
+      <button class="btn" id="addBtn">➕ Guardar movimiento</button>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <h2>📋 Movimientos registrados</h2>
+        <button class="btn-sm btn-outline" id="deleteAllBtn">Borrar todos</button>
+      </div>
+      <div id="purchases" style="margin-top:8px;"></div>
+    </div>
+  </section>
+</main>
+
+<nav>
+  <button class="active" data-tab="resumen">
+    <span style="font-size:18px">📊</span> Resumen
+  </button>
+  <button data-tab="compras">
+    <span style="font-size:18px">🛍️</span> Movimientos
+  </button>
+</nav>
+
+<script>
+const MES=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+let data;
+try{data=JSON.parse(localStorage.getItem('tarjetaApp')||'null');}catch(e){data=null;}
+data=data||{closing:15, due:5, purchases:[], scriptUrl: ""};
+
+let isSyncing = false;
+
+// Actualizar Status UI
+function setSyncStatus(text, color) {
+  const el = document.getElementById('syncStatus');
+  el.textContent = text;
+  el.style.background = color || 'rgba(255,255,255,0.2)';
+}
+
+// Cargar desde la nube al iniciar
+async function loadFromCloud() {
+  if(!data.scriptUrl) return;
+  setSyncStatus('⏳ Cargando nube...', '#fbbf24');
+  try {
+    const res = await fetch(data.scriptUrl);
+    const cloudData = await res.json();
+    
+    // Si la nube responde bien, sobreescribimos los datos locales
+    // Convertir tipos de datos por seguridad
+    data.purchases = cloudData.map(p => ({
+      id: p.id,
+      desc: p.desc,
+      comment: p.comment || "",
+      total: Number(p.total),
+      n: Number(p.n),
+      date: p.date
+    }));
+    
+    localStorage.setItem('tarjetaApp', JSON.stringify(data));
+    renderAll();
+    setSyncStatus('☁️ Sincronizado', '#10b981');
+  } catch (error) {
+    console.error(error);
+    setSyncStatus('⚠️ Sin conexión', '#ef4444');
+  }
+}
+
+// Subir a la nube después de cada cambio
+async function pushToCloud() {
+  if(!data.scriptUrl || isSyncing) return;
+  isSyncing = true;
+  setSyncStatus('⏳ Guardando...', '#fbbf24');
+  try {
+    await fetch(data.scriptUrl, {
+      method: 'POST',
+      body: JSON.stringify(data.purchases)
+    });
+    setSyncStatus('☁️ Sincronizado', '#10b981');
+  } catch (error) {
+    console.error(error);
+    setSyncStatus('⚠️ Error al guardar', '#ef4444');
+  } finally {
+    isSyncing = false;
+  }
+}
+
+function save(){
+  try{localStorage.setItem('tarjetaApp',JSON.stringify(data));}catch(e){}
+  pushToCloud();
+}
+
+function round(x){return Math.round(x);}
+function fmt(n){
+  const num = Number(n);
+  const sign = num < 0 ? '-' : '';
+  return sign + '$' + Math.abs(Math.round(num)).toLocaleString('es-CL');
+}
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function ymLabel(i){return MES[i%12]+' '+Math.floor(i/12);}
+
+function stmtOf(dateStr){
+  const [y,m,d]=dateStr.split('-').map(Number);
+  let i=y*12+(m-1);
+  if(d>data.closing) i++;
+  return i;
+}
+function dateOf(i,day){return new Date(Math.floor(i/12),i%12,day);}
+function fdate(d){return d.toLocaleDateString('es-CL',{day:'2-digit',month:'2-digit',year:'numeric'});}
+
+function schedule(){
+  const map={};
+  for(const p of data.purchases){
+    const s0=stmtOf(p.date);
+    const base=round(p.total/p.n);
+    for(let k=0;k<p.n;k++){
+      const amt=(k===p.n-1)?round(p.total-base*(p.n-1)):base;
+      const s=s0+k;
+      (map[s]=map[s]||[]).push({desc:p.desc,k:k+1,n:p.n,amt,comment:p.comment});
+    }
+  }
+  return map;
+}
+function currentStmt(){
+  const t=new Date();
+  return t.getFullYear()*12+t.getMonth()+(t.getDate()>data.closing?1:0);
+}
+
+function renderSummary(){
+  const map=schedule();
+  const cur=currentStmt();
+  const totalOf=s=>(map[s]||[]).reduce((a,c)=>a+c.amt,0);
+
+  const nt=totalOf(cur);
+  document.getElementById('nextTotal').textContent=fmt(nt);
+  document.getElementById('nextDates').innerHTML=
+    `Cierra: <b>${fdate(dateOf(cur,data.closing))}</b> · Vence: <b>${fdate(dateOf(cur+1,data.due))}</b>`;
+
+  let rem=0;
+  for(const s in map){ 
+    if(+s > cur) rem+=totalOf(+s); 
+  }
+  
+  const totalDebt = nt + rem;
+  document.getElementById('remaining').textContent=fmt(rem);
+  
+  const debtEl = document.getElementById('totalDebt');
+  debtEl.textContent = fmt(totalDebt);
+  if(totalDebt < 0) {
+      debtEl.style.color = '#15803d';
+  } else {
+      debtEl.style.color = '#1f2937';
+  }
+
+  let max=1;
+  const rows=[];
+  for(let s=cur;s<cur+12;s++){ const t=Math.max(0, totalOf(s)); if(t>max)max=t; rows.push(s); }
+  
+  let html='';
+  for(const s of rows){
+    const items=map[s]||[];
+    const t=totalOf(s);
+    const pct=Math.max(0, Math.round(t/max*100));
+    const textColor = t < 0 ? 'text-green' : '';
+    
+    html+=`<details>
+      <summary>
+        <div class="row">
+          <div><b>${ymLabel(s)}</b><div class="muted">Cierre ${fdate(dateOf(s,data.closing))} · Vence ${fdate(dateOf(s+1,data.due))}</div></div>
+          <div style="text-align:right"><b class="${textColor}">${fmt(t)}</b><div class="muted">${items.length} movs.</div></div>
+        </div>
+        <div class="bar"><div style="width:${pct}%"></div></div>
+      </summary>
+      ${items.length?items.map(it=>{
+        const commentHtml = it.comment ? `<div class="comment-text">${esc(it.comment)}</div>` : '';
+        return `<div class="item">
+                  <div style="flex:1">
+                    <div>${esc(it.desc)}<span class="tag">${it.k}/${it.n}</span></div>
+                    ${commentHtml}
+                  </div>
+                  <span class="${it.amt < 0 ? 'text-green' : ''}">${fmt(it.amt)}</span>
+                </div>`;
+      }).join(''):'<div class="item muted">Sin cargos</div>'}
+    </details>`;
+  }
+  document.getElementById('proj').innerHTML=html;
+
+  document.getElementById('closing').value=data.closing;
+  document.getElementById('due').value=data.due;
+  document.getElementById('scriptUrl').value=data.scriptUrl;
+}
+
+function renderPurchases(){
+  const list=[...data.purchases].sort((a,b)=>b.date.localeCompare(a.date));
+  const el=document.getElementById('purchases');
+  
+  if(!list.length){
+    el.innerHTML='<div class="empty">Aún no registraste movimientos</div>';
+    document.getElementById('deleteAllBtn').style.display = 'none';
+    return;
+  }
+  
+  document.getElementById('deleteAllBtn').style.display = 'block';
+
+  const groups = {};
+  list.forEach(p => {
+    const [y, m] = p.date.split('-');
+    const monthKey = `${MES[parseInt(m)-1]} ${y}`;
+    if (!groups[monthKey]) groups[monthKey] = [];
+    groups[monthKey].push(p);
+  });
+
+  let html = '';
+  for (const [month, purchases] of Object.entries(groups)) {
+    html += `
+      <details open style="margin-bottom:8px; border:1px solid #e5e7eb; border-radius:8px; overflow:hidden;">
+        <summary style="background:#f9fafb; padding:12px; font-weight:600; display:flex; justify-content:space-between;">
+          <span>📅 ${month}</span>
+          <span class="muted">${purchases.length} movs.</span>
+        </summary>
+        <div style="padding:0 12px;">
+    `;
+    
+    html += purchases.map(p=>{
+      const s0=stmtOf(p.date);
+      const cuota=fmt(round(p.total/p.n));
+      const last=s0+p.n-1;
+      const commentHtml = p.comment ? `<div class="muted" style="margin-top:4px;">💬 <i>${esc(p.comment)}</i></div>` : '';
+      
+      return `<div class="pur">
+        <div class="row">
+          <div class="pur-title">${esc(p.desc)}</div>
+          <div style="display:flex; gap:6px;">
+            <button class="btn-sm btn-sm-blue" onclick="editComment('${p.id}')">💬 Comentar</button>
+            <button class="btn-sm" onclick="delP('${p.id}')">Eliminar</button>
+          </div>
+        </div>
+        <div class="muted" style="margin-top:4px;">Total <span class="${p.total < 0 ? 'text-green' : ''}">${fmt(p.total)}</span> · ${p.n>1?p.n+' cuotas de '+cuota:(p.total < 0 ? 'Abono/Reembolso' : 'Contado (1 pago)')}</div>
+        <div class="muted">Fecha: ${p.date} · ${p.n>1 ? '1er cargo: '+ymLabel(s0)+' · Último: '+ymLabel(last) : 'Impacta en: '+ymLabel(s0)}</div>
+        ${commentHtml}
+      </div>`;
+    }).join('');
+    
+    html += `</div></details>`;
+  }
+  
+  el.innerHTML = html;
+}
+
+function updatePreview(){
+  const total=parseFloat(document.getElementById('total').value);
+  const n=parseInt(document.getElementById('cuotas').value)||1;
+  const date=document.getElementById('fecha').value;
+  const pv=document.getElementById('preview');
+  if(isNaN(total)||!date){pv.textContent='Completa monto y fecha para ver el estimado.';return;}
+  const s0=stmtOf(date);
+  
+  if (total < 0) {
+    pv.innerHTML=`Abono de: <b><span class="text-green">${fmt(round(total))}</span></b> · Se restará en el resumen de <b>${ymLabel(s0)}</b>`;
+  } else {
+    pv.innerHTML=`Cuota: <b>${fmt(round(total/n))}</b> · Primer cargo en el resumen de <b>${ymLabel(s0)}</b>${n>1?' · Último en '+ymLabel(s0+n-1):''}`;
+  }
+}
+
+function editComment(id){
+  const p = data.purchases.find(x => String(x.id) === String(id));
+  if(!p) return;
+  const newComment = prompt(`Agrega o modifica el comentario para "${p.desc}":`, p.comment || '');
+  if(newComment !== null){
+    p.comment = newComment.trim();
+    save();
+    renderAll();
+  }
+}
+
+function delP(id){
+  if(!confirm('¿Eliminar este movimiento?'))return;
+  data.purchases=data.purchases.filter(p=>String(p.id)!==String(id));
+  save();renderAll();
+}
+
+document.getElementById('deleteAllBtn').onclick = () => {
+  if(!confirm('⚠️ ¿Estás seguro de que deseas eliminar TODOS los movimientos registrados? Esta acción no se puede deshacer.')) return;
+  data.purchases = [];
+  save();
+  renderAll();
+};
+
+document.getElementById('addBtn').onclick=()=>{
+  const desc=document.getElementById('desc').value.trim();
+  const comment=document.getElementById('comentario').value.trim();
+  const total=parseFloat(document.getElementById('total').value);
+  const n=parseInt(document.getElementById('cuotas').value)||1;
+  const date=document.getElementById('fecha').value;
+  
+  if(!desc||isNaN(total)||total===0||!date){alert('Completa descripción, monto y fecha (el monto no puede ser 0).');return;}
+  
+  data.purchases.push({
+    id:Date.now(),
+    desc,
+    comment,
+    total:round(total),
+    n:Math.max(1,Math.min(60,n)),
+    date
+  });
+  
+  save();
+  document.getElementById('desc').value='';
+  document.getElementById('comentario').value='';
+  document.getElementById('total').value='';
+  document.getElementById('cuotas').value='1';
+  renderAll();
+  
+  const pv = document.getElementById('preview');
+  pv.innerHTML = '✅ <b>Movimiento guardado exitosamente.</b>';
+  pv.style.background = '#dcfce7';
+  pv.style.color = '#15803d';
+  
+  setTimeout(() => {
+    pv.style.background = '#eef2ff';
+    pv.style.color = '#3730a3';
+    updatePreview();
+  }, 3000);
+};
+
+document.getElementById('importBtn').onclick = () => {
+  const file = document.getElementById('fileImport').files[0];
+  if(!file) { alert('Por favor selecciona un archivo primero.'); return; }
+  
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const dataBuffer = new Uint8Array(e.target.result);
+      const workbook = XLSX.read(dataBuffer, {type: 'array'});
+      const sheetName = workbook.SheetNames[0];
+      const sheet = workbook.Sheets[sheetName];
+      
+      const rows = XLSX.utils.sheet_to_json(sheet, {header: 1, defval: ''});
+      
+      let imported = 0;
+      let startParsing = false;
+      
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        if (!row || row.length < 5) continue;
+        
+        const col1 = String(row[1]).trim();
+        
+        if (col1 === 'Movimientos Internacionales') {
+          startParsing = false; 
+        }
+        if (col1 === 'Fecha') {
+          startParsing = true;
+          continue;
+        }
+        
+        if (startParsing) {
+          if (!col1.match(/^\d{2}\/\d{2}\/\d{4}$/)) continue;
+          
+          const [d, m, y] = col1.split('/');
+          const dateIso = `${y}-${m}-${d}`;
+          const desc = String(row[4]).trim();
+          
+          let cuotasTotal = 1;
+          for(let j = 5; j < row.length; j++) {
+            if(typeof row[j] === 'string' && /^\d{2}\/\d{2}$/.test(row[j].trim())) {
+              const parts = row[j].trim().split('/');
+              cuotasTotal = parseInt(parts[1], 10) || 1;
+              break;
+            }
+          }
+          
+          let monto = 0;
+          for(let j = row.length - 1; j >= 5; j--) {
+            const val = row[j];
+            if(typeof val === 'number' && !isNaN(val)) {
+              monto = val;
+              break;
+            }
+          }
+          
+          if (monto === 0) continue;
+          const totalMonto = Math.round(monto);
+          
+          const isDuplicate = data.purchases.some(p => 
+            p.date === dateIso && p.desc === desc && p.total === totalMonto && p.n === cuotasTotal
+          );
+          
+          if (!isDuplicate) {
+            data.purchases.push({
+              id: Date.now() + Math.random(),
+              desc: desc,
+              comment: "",
+              total: totalMonto,
+              n: cuotasTotal,
+              date: dateIso
+            });
+            imported++;
+          }
+        }
+      }
+      
+      save();
+      renderAll();
+      
+      const res = document.getElementById('importResult');
+      res.style.display = 'block';
+      if (imported > 0) {
+        res.innerHTML = `✅ ¡Éxito! Se importaron <b>${imported}</b> movimientos nuevos.`;
+        res.style.background = '#dcfce7';
+        res.style.color = '#15803d';
+      } else {
+        res.innerHTML = `ℹ️ No se encontraron movimientos nuevos (o ya estaban registrados).`;
+        res.style.background = '#eef2ff';
+        res.style.color = '#3730a3';
+      }
+    } catch (err) {
+      alert("Hubo un error al leer el archivo. Asegúrate de que es la cartola Excel original del banco.");
+      console.error(err);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+};
+
+['total','cuotas','fecha'].forEach(id=>document.getElementById(id).addEventListener('input',updatePreview));
+document.getElementById('closing').onchange=e=>{
+  let v=parseInt(e.target.value);v=Math.min(28,Math.max(1,v||15));data.closing=v;save();renderAll();
+};
+document.getElementById('due').onchange=e=>{
+  let v=parseInt(e.target.value);v=Math.min(28,Math.max(1,v||5));data.due=v;save();renderAll();
+};
+
+document.getElementById('scriptUrl').onchange=e=>{
+  data.scriptUrl = e.target.value.trim();
+  try{localStorage.setItem('tarjetaApp',JSON.stringify(data));}catch(err){}
+  if(data.scriptUrl) loadFromCloud();
+};
+
+document.querySelector('nav').addEventListener('click',e=>{
+  const b=e.target.closest('button');
+  if(!b)return;
+  document.querySelectorAll('nav button').forEach(x=>x.classList.remove('active'));
+  document.querySelectorAll('.section').forEach(x=>x.classList.remove('active'));
+  b.classList.add('active');
+  document.getElementById('tab-'+b.dataset.tab).classList.add('active');
+  window.scrollTo(0,0);
+});
+
+function renderAll(){renderSummary();renderPurchases();}
+
+document.getElementById('fecha').value=new Date().toLocaleDateString('en-CA');
+renderAll();
+updatePreview();
+
+// Cargar la nube al abrir la app
+window.onload = loadFromCloud;
+</script>
+</body>
+</html>
