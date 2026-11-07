@@ -12,7 +12,9 @@ body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background
 header{background:linear-gradient(135deg,#4f46e5,#7c3aed);color:#fff;padding:20px 16px 26px}
 header h1{font-size:20px; display:flex; justify-content:space-between; align-items:center;}
 header p{font-size:13px;opacity:.85;margin-top:4px}
-#syncStatus{font-size:12px; margin-top:8px; font-weight:600; padding:4px 8px; background:rgba(255,255,255,0.2); border-radius:6px; display:inline-block;}
+#syncStatus{font-size:12px; font-weight:600; padding:4px 8px; background:rgba(255,255,255,0.2); border-radius:6px; display:inline-block;}
+#refreshBtn{background:rgba(255,255,255,0.2); border:none; border-radius:6px; color:#fff; padding:4px 8px; font-size:14px; cursor:pointer; transition: opacity 0.2s;}
+#refreshBtn:active{opacity: 0.6;}
 main{padding:14px;max-width:620px;margin:auto}
 .section{display:none}
 .section.active{display:block}
@@ -55,7 +57,13 @@ nav button.active{color:#4f46e5;font-weight:600}
 </head>
 <body>
 <header>
-  <h1>💳 Control de Tarjeta <div id="syncStatus">☁️ Nube desactivada</div></h1>
+  <h1>
+    <span>💳 Control</span>
+    <div style="display:flex; align-items:center; gap:6px;">
+      <div id="syncStatus">☁️ Nube desc.</div>
+      <button id="refreshBtn" title="Descargar de la nube">🔄</button>
+    </div>
+  </h1>
   <p>Compras, cuotas y resúmenes estimados</p>
 </header>
 
@@ -182,7 +190,7 @@ function setSyncStatus(text, color) {
   el.style.background = color || 'rgba(255,255,255,0.2)';
 }
 
-// 1. DESCARGA PURA: La nube manda. Se ejecuta solo al abrir la app o forzar.
+// 1. DESCARGA PURA: La nube manda. Se ejecuta al abrir la app o forzar.
 async function downloadFromCloud() {
   if(!data.scriptUrl) return;
   setSyncStatus('⏳ Actualizando...', '#fbbf24');
@@ -206,7 +214,7 @@ async function downloadFromCloud() {
   }
 }
 
-// 2. SUBIDA OPTIMIZADA: Fuerza a Safari a no bloquearse y no descarga fantasmas después
+// 2. SUBIDA OPTIMIZADA: iOS/Safari no bloquea el guardado
 async function uploadToCloud() {
   if(!data.scriptUrl) return;
   setSyncStatus('⏳ Guardando...', '#fbbf24');
@@ -214,14 +222,13 @@ async function uploadToCloud() {
   try {
     await fetch(data.scriptUrl, {
       method: 'POST',
-      mode: 'no-cors', // Fundamental para que iOS/Safari no bloquee el guardado
+      mode: 'no-cors',
       headers: {
         'Content-Type': 'text/plain'
       },
       body: JSON.stringify(data.purchases)
     });
     
-    // Al subir, nuestro equipo ya tiene la versión correcta. NO volvemos a descargar.
     setSyncStatus('☁️ Sincronizado', '#10b981');
   } catch (error) {
     console.error(error);
@@ -229,7 +236,16 @@ async function uploadToCloud() {
   }
 }
 
-// Botón para limpiar memoria y descargar todo fresco desde Google Sheets
+// Botón de refrescar rápido en la cabecera
+document.getElementById('refreshBtn').onclick = () => {
+  if(!data.scriptUrl) {
+    alert('Configura la URL de sincronización en la sección Resumen para conectarte a la nube.');
+    return;
+  }
+  downloadFromCloud();
+};
+
+// Botón para limpiar memoria y descargar todo fresco (emergencia)
 document.getElementById('clearCacheBtn').onclick = () => {
   if(!data.scriptUrl) {
     alert('Necesitas configurar la URL de la nube primero.');
@@ -432,7 +448,6 @@ function editComment(id){
   }
 }
 
-// Al eliminar, simplemente sacamos el registro y sobreescribimos la nube
 function delP(id){
   if(!confirm('¿Eliminar este movimiento?'))return;
   data.purchases = data.purchases.filter(x => String(x.id) !== String(id));
