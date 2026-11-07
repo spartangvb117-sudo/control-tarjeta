@@ -176,30 +176,25 @@ let data;
 try{data=JSON.parse(localStorage.getItem('tarjetaApp')||'null');}catch(e){data=null;}
 data = data || {closing:15, due:5, purchases:[], scriptUrl: ""};
 
-let isSyncing = false;
-
 function setSyncStatus(text, color) {
   const el = document.getElementById('syncStatus');
   el.textContent = text;
   el.style.background = color || 'rgba(255,255,255,0.2)';
 }
 
-// 1. DESCARGA PURA: La nube manda, el caché local se sobreescribe.
+// 1. DESCARGA PURA: La nube manda. Se ejecuta solo al abrir la app o forzar.
 async function downloadFromCloud() {
   if(!data.scriptUrl) return;
-  isSyncing = true;
   setSyncStatus('⏳ Actualizando...', '#fbbf24');
   
   try {
     const res = await fetch(data.scriptUrl);
     const cloudData = await res.json();
 
-    // Limpiamos las fechas extrañas de Google Sheets
     cloudData.forEach(p => {
        if (p.date && typeof p.date === 'string' && p.date.includes('T')) p.date = p.date.split('T')[0];
     });
 
-    // REEMPLAZO TOTAL: Lo que hay en Google Sheets es la única verdad
     data.purchases = cloudData;
     localStorage.setItem('tarjetaApp', JSON.stringify(data));
     renderAll();
@@ -208,40 +203,39 @@ async function downloadFromCloud() {
   } catch (error) {
     console.error(error);
     setSyncStatus('⚠️ Usando caché offline', '#ef4444');
-  } finally {
-    isSyncing = false;
   }
 }
 
-// 2. SUBIDA SEGUIDA DE LIMPIEZA: Enviamos datos e inmediatamente limpiamos el caché
+// 2. SUBIDA OPTIMIZADA: Fuerza a Safari a no bloquearse y no descarga fantasmas después
 async function uploadToCloud() {
   if(!data.scriptUrl) return;
-  isSyncing = true;
   setSyncStatus('⏳ Guardando...', '#fbbf24');
   
   try {
     await fetch(data.scriptUrl, {
       method: 'POST',
+      mode: 'no-cors', // Fundamental para que iOS/Safari no bloquee el guardado
+      headers: {
+        'Content-Type': 'text/plain'
+      },
       body: JSON.stringify(data.purchases)
     });
     
-    // Una vez guardado con éxito en la nube, forzamos la descarga para limpiar fantasmas
-    await downloadFromCloud(); 
-    
+    // Al subir, nuestro equipo ya tiene la versión correcta. NO volvemos a descargar.
+    setSyncStatus('☁️ Sincronizado', '#10b981');
   } catch (error) {
     console.error(error);
-    setSyncStatus('⚠️ Guardado solo local', '#ef4444');
-    isSyncing = false;
+    setSyncStatus('⚠️ Error al subir', '#ef4444');
   }
 }
 
-// Botón explícito para forzar descarga y limpiar caché
+// Botón para limpiar memoria y descargar todo fresco desde Google Sheets
 document.getElementById('clearCacheBtn').onclick = () => {
   if(!data.scriptUrl) {
     alert('Necesitas configurar la URL de la nube primero.');
     return;
   }
-  if(!confirm('⚠️ ¿Limpiar la memoria de este dispositivo y forzar una descarga limpia desde Google Sheets? \n\n(Ideal si borraste cosas directo en el Excel)')) return;
+  if(!confirm('⚠️ ¿Limpiar la memoria de este dispositivo y forzar una descarga limpia desde Google Sheets?')) return;
   downloadFromCloud();
 };
 
@@ -355,7 +349,6 @@ function renderSummary(){
 }
 
 function renderPurchases(){
-  // Como la nube manda, ya no ocultamos los borrados, simplemente se borran de verdad
   const list = [...data.purchases].sort((a,b) => b.date.localeCompare(a.date));
   const el=document.getElementById('purchases');
   
@@ -439,7 +432,7 @@ function editComment(id){
   }
 }
 
-// Ahora el borrado de la app elimina de verdad el registro local y luego actualiza la nube
+// Al eliminar, simplemente sacamos el registro y sobreescribimos la nube
 function delP(id){
   if(!confirm('¿Eliminar este movimiento?'))return;
   data.purchases = data.purchases.filter(x => String(x.id) !== String(id));
@@ -611,7 +604,7 @@ document.getElementById('fecha').value=new Date().toLocaleDateString('en-CA');
 renderAll();
 updatePreview();
 
-// AL ABRIR LA APP: Solo descargamos y limpiamos fantasmas locales
+// AL ABRIR LA APP: Descarga silenciosa para asegurar que el dispositivo esté igual a la nube
 window.onload = downloadFromCloud;
 </script>
 </body>
