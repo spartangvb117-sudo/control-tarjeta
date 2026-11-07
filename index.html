@@ -176,9 +176,6 @@ let data;
 try{data=JSON.parse(localStorage.getItem('tarjetaApp')||'null');}catch(e){data=null;}
 data = data || {closing:15, due:5, purchases:[], scriptUrl: ""};
 
-// Iniciar marca de tiempo para saber qué datos son nuevos y cuáles son viejos
-if (!data.lastSync) data.lastSync = Date.now();
-
 let isSyncing = false;
 
 function setSyncStatus(text, color) {
@@ -187,105 +184,70 @@ function setSyncStatus(text, color) {
   el.style.background = color || 'rgba(255,255,255,0.2)';
 }
 
-// MOTOR DE SINCRONIZACIÓN INTELIGENTE (Anti-Resurrección)
-async function syncData() {
-  if(!data.scriptUrl || isSyncing) return;
+// 1. DESCARGA PURA: La nube manda, el caché local se sobreescribe.
+async function downloadFromCloud() {
+  if(!data.scriptUrl) return;
   isSyncing = true;
-  setSyncStatus('⏳ Sincronizando...', '#fbbf24');
+  setSyncStatus('⏳ Actualizando...', '#fbbf24');
   
   try {
     const res = await fetch(data.scriptUrl);
     const cloudData = await res.json();
 
-    const cloudMap = new Map();
+    // Limpiamos las fechas extrañas de Google Sheets
     cloudData.forEach(p => {
        if (p.date && typeof p.date === 'string' && p.date.includes('T')) p.date = p.date.split('T')[0];
-       cloudMap.set(String(p.id), p);
     });
 
-    const mergedMap = new Map();
-    // 1. Tomamos todo lo de la nube
-    cloudMap.forEach((p, id) => mergedMap.set(id, p));
-
-    // 2. Evaluamos la caché del dispositivo local
-    data.purchases.forEach(p => {
-       if (p.date && typeof p.date === 'string' && p.date.includes('T')) p.date = p.date.split('T')[0];
-       
-       const id = String(p.id);
-       const creationTime = parseInt(id); // El ID es el milisegundo en que se creó
-
-       if (cloudMap.has(id)) {
-           // Existe en ambos: Fusionamos estados (borrado o comentarios)
-           const cloudP = cloudMap.get(id);
-           if (p.deleted || cloudP.deleted) cloudP.deleted = p.deleted || cloudP.deleted;
-           if (p.comment && !cloudP.comment) cloudP.comment = p.comment;
-           mergedMap.set(id, cloudP);
-       } else {
-           // Existe en el equipo, pero NO en la nube
-           if (creationTime > data.lastSync) {
-               // Es un gasto genuinamente nuevo creado mientras estabas sin internet. Se guarda y sube.
-               mergedMap.set(id, p);
-           }
-           // Si creationTime < lastSync, es un fantasma viejo que fue borrado en la nube. ¡No hacemos nada (se elimina)!
-       }
-    });
-
-    data.purchases = Array.from(mergedMap.values());
-    data.lastSync = Date.now(); // Actualizamos la marca de tiempo de sincronización
+    // REEMPLAZO TOTAL: Lo que hay en Google Sheets es la única verdad
+    data.purchases = cloudData;
     localStorage.setItem('tarjetaApp', JSON.stringify(data));
     renderAll();
-
-    // Subimos la versión limpia y definitiva a la nube
-    await fetch(data.scriptUrl, {
-      method: 'POST',
-      body: JSON.stringify(data.purchases)
-    });
     
     setSyncStatus('☁️ Sincronizado', '#10b981');
   } catch (error) {
     console.error(error);
-    setSyncStatus('⚠️ Offline (Guardado local)', '#ef4444');
+    setSyncStatus('⚠️ Usando caché offline', '#ef4444');
   } finally {
     isSyncing = false;
   }
 }
 
-// NUEVA FUNCIÓN: Limpiar Caché y Forzar Descarga
-document.getElementById('clearCacheBtn').onclick = async () => {
+// 2. SUBIDA SEGUIDA DE LIMPIEZA: Enviamos datos e inmediatamente limpiamos el caché
+async function uploadToCloud() {
+  if(!data.scriptUrl) return;
+  isSyncing = true;
+  setSyncStatus('⏳ Guardando...', '#fbbf24');
+  
+  try {
+    await fetch(data.scriptUrl, {
+      method: 'POST',
+      body: JSON.stringify(data.purchases)
+    });
+    
+    // Una vez guardado con éxito en la nube, forzamos la descarga para limpiar fantasmas
+    await downloadFromCloud(); 
+    
+  } catch (error) {
+    console.error(error);
+    setSyncStatus('⚠️ Guardado solo local', '#ef4444');
+    isSyncing = false;
+  }
+}
+
+// Botón explícito para forzar descarga y limpiar caché
+document.getElementById('clearCacheBtn').onclick = () => {
   if(!data.scriptUrl) {
     alert('Necesitas configurar la URL de la nube primero.');
     return;
   }
-  if(!confirm('⚠️ ¿Limpiar la memoria de este dispositivo y forzar una descarga limpia desde Google Sheets? \n\n(Usa esto si ves datos fantasmas duplicados)')) return;
-  
-  setSyncStatus('⏳ Limpiando caché...', '#fbbf24');
-  isSyncing = true;
-  try {
-    const res = await fetch(data.scriptUrl);
-    const cloudData = await res.json();
-    
-    cloudData.forEach(p => {
-       if (p.date && typeof p.date === 'string' && p.date.includes('T')) p.date = p.date.split('T')[0];
-    });
-
-    // Reemplazamos todo lo local con la copia exacta de la nube
-    data.purchases = cloudData;
-    data.lastSync = Date.now();
-    localStorage.setItem('tarjetaApp', JSON.stringify(data));
-    renderAll();
-    
-    setSyncStatus('☁️ Caché limpia y actualizada', '#10b981');
-  } catch (error) {
-    alert('Error al descargar. Revisa tu conexión a internet.');
-    setSyncStatus('⚠️ Offline', '#ef4444');
-  } finally {
-    isSyncing = false;
-  }
+  if(!confirm('⚠️ ¿Limpiar la memoria de este dispositivo y forzar una descarga limpia desde Google Sheets? \n\n(Ideal si borraste cosas directo en el Excel)')) return;
+  downloadFromCloud();
 };
 
 function save(){
   try{localStorage.setItem('tarjetaApp',JSON.stringify(data));}catch(e){}
-  syncData(); 
+  uploadToCloud(); 
 }
 
 function round(x){return Math.round(x);}
@@ -310,9 +272,8 @@ function fdate(d){return d.toLocaleDateString('es-CL',{day:'2-digit',month:'2-di
 
 function schedule(){
   const map={};
-  const activePurchases = data.purchases.filter(p => !p.deleted);
   
-  for(const p of activePurchases){
+  for(const p of data.purchases){
     const s0=stmtOf(p.date);
     const base=round(p.total/p.n);
     for(let k=0;k<p.n;k++){
@@ -323,6 +284,7 @@ function schedule(){
   }
   return map;
 }
+
 function currentStmt(){
   const t=new Date();
   return t.getFullYear()*12+t.getMonth()+(t.getDate()>data.closing?1:0);
@@ -393,7 +355,8 @@ function renderSummary(){
 }
 
 function renderPurchases(){
-  const list = data.purchases.filter(p => !p.deleted).sort((a,b) => b.date.localeCompare(a.date));
+  // Como la nube manda, ya no ocultamos los borrados, simplemente se borran de verdad
+  const list = [...data.purchases].sort((a,b) => b.date.localeCompare(a.date));
   const el=document.getElementById('purchases');
   
   if(!list.length){
@@ -472,20 +435,21 @@ function editComment(id){
   if(newComment !== null){
     p.comment = newComment.trim();
     save();
+    renderAll();
   }
 }
 
+// Ahora el borrado de la app elimina de verdad el registro local y luego actualiza la nube
 function delP(id){
   if(!confirm('¿Eliminar este movimiento?'))return;
-  const p = data.purchases.find(x => String(x.id) === String(id));
-  if(p) p.deleted = Date.now();
+  data.purchases = data.purchases.filter(x => String(x.id) !== String(id));
   save();
   renderAll();
 }
 
 document.getElementById('deleteAllBtn').onclick = () => {
   if(!confirm('⚠️ ¿Estás seguro de que deseas eliminar TODOS los movimientos registrados? Esta acción no se puede deshacer.')) return;
-  data.purchases.forEach(p => p.deleted = Date.now());
+  data.purchases = [];
   save();
   renderAll();
 };
@@ -578,8 +542,7 @@ document.getElementById('importBtn').onclick = () => {
           if (monto === 0) continue;
           const totalMonto = Math.round(monto);
           
-          const activePurchases = data.purchases.filter(p => !p.deleted);
-          const isDuplicate = activePurchases.some(p => 
+          const isDuplicate = data.purchases.some(p => 
             p.date === dateIso && p.desc === desc && p.total === totalMonto && p.n === cuotasTotal
           );
           
@@ -630,7 +593,7 @@ document.getElementById('due').onchange=e=>{
 document.getElementById('scriptUrl').onchange=e=>{
   data.scriptUrl = e.target.value.trim();
   localStorage.setItem('tarjetaApp',JSON.stringify(data));
-  if(data.scriptUrl) syncData();
+  if(data.scriptUrl) downloadFromCloud();
 };
 
 document.querySelector('nav').addEventListener('click',e=>{
@@ -648,7 +611,8 @@ document.getElementById('fecha').value=new Date().toLocaleDateString('en-CA');
 renderAll();
 updatePreview();
 
-window.onload = syncData;
+// AL ABRIR LA APP: Solo descargamos y limpiamos fantasmas locales
+window.onload = downloadFromCloud;
 </script>
 </body>
 </html>
