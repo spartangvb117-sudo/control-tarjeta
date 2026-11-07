@@ -101,6 +101,7 @@ nav button.active{color:#4f46e5;font-weight:600}
         <label>URL Sincronización (Google Apps Script)</label>
         <input type="text" id="scriptUrl" placeholder="https://script.google.com/macros/s/..." style="font-size:13px; color:#4b5563;">
         <div class="hint" style="background:#f3f4f6; color:#4b5563;">Pega aquí el enlace para activar el guardado y sincronización automática entre dispositivos.</div>
+        <button class="btn-sm btn-outline" id="clearCacheBtn" style="margin-top: 10px; width: 100%; padding: 10px;">🧹 Limpiar caché local y forzar descarga</button>
       </div>
     </div>
   </section>
@@ -173,7 +174,10 @@ nav button.active{color:#4f46e5;font-weight:600}
 const MES=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
 let data;
 try{data=JSON.parse(localStorage.getItem('tarjetaApp')||'null');}catch(e){data=null;}
-data=data||{closing:15, due:5, purchases:[], scriptUrl: ""};
+data = data || {closing:15, due:5, purchases:[], scriptUrl: ""};
+
+// Iniciar marca de tiempo para saber qué datos son nuevos y cuáles son viejos
+if (!data.lastSync) data.lastSync = Date.now();
 
 let isSyncing = false;
 
@@ -183,7 +187,7 @@ function setSyncStatus(text, color) {
   el.style.background = color || 'rgba(255,255,255,0.2)';
 }
 
-// MOTOR DE SINCRONIZACIÓN INTELIGENTE (Fusión)
+// MOTOR DE SINCRONIZACIÓN INTELIGENTE (Anti-Resurrección)
 async function syncData() {
   if(!data.scriptUrl || isSyncing) return;
   isSyncing = true;
@@ -193,42 +197,48 @@ async function syncData() {
     const res = await fetch(data.scriptUrl);
     const cloudData = await res.json();
 
-    const map = new Map();
-    
-    // A) Procesamos los datos de la nube
+    const cloudMap = new Map();
     cloudData.forEach(p => {
-       // CORRECCIÓN DE FECHA: Limpiar la zona horaria que envía Google Sheets
-       if (p.date && typeof p.date === 'string' && p.date.includes('T')) {
-           p.date = p.date.split('T')[0];
-       }
-       map.set(String(p.id), p);
+       if (p.date && typeof p.date === 'string' && p.date.includes('T')) p.date = p.date.split('T')[0];
+       cloudMap.set(String(p.id), p);
     });
-    
-    // B) Evaluamos lo local
+
+    const mergedMap = new Map();
+    // 1. Tomamos todo lo de la nube
+    cloudMap.forEach((p, id) => mergedMap.set(id, p));
+
+    // 2. Evaluamos la caché del dispositivo local
     data.purchases.forEach(p => {
-       // Asegurarnos que la fecha local también esté limpia por si acaso
-       if (p.date && typeof p.date === 'string' && p.date.includes('T')) {
-           p.date = p.date.split('T')[0];
-       }
+       if (p.date && typeof p.date === 'string' && p.date.includes('T')) p.date = p.date.split('T')[0];
        
        const id = String(p.id);
-       if (map.has(id)) {
-           if (p.deleted) map.set(id, p);
-           else if (p.comment && !map.get(id).comment) map.set(id, p);
+       const creationTime = parseInt(id); // El ID es el milisegundo en que se creó
+
+       if (cloudMap.has(id)) {
+           // Existe en ambos: Fusionamos estados (borrado o comentarios)
+           const cloudP = cloudMap.get(id);
+           if (p.deleted || cloudP.deleted) cloudP.deleted = p.deleted || cloudP.deleted;
+           if (p.comment && !cloudP.comment) cloudP.comment = p.comment;
+           mergedMap.set(id, cloudP);
        } else {
-           map.set(id, p);
+           // Existe en el equipo, pero NO en la nube
+           if (creationTime > data.lastSync) {
+               // Es un gasto genuinamente nuevo creado mientras estabas sin internet. Se guarda y sube.
+               mergedMap.set(id, p);
+           }
+           // Si creationTime < lastSync, es un fantasma viejo que fue borrado en la nube. ¡No hacemos nada (se elimina)!
        }
     });
 
-    const mergedArray = Array.from(map.values());
-
-    data.purchases = mergedArray;
+    data.purchases = Array.from(mergedMap.values());
+    data.lastSync = Date.now(); // Actualizamos la marca de tiempo de sincronización
     localStorage.setItem('tarjetaApp', JSON.stringify(data));
     renderAll();
 
+    // Subimos la versión limpia y definitiva a la nube
     await fetch(data.scriptUrl, {
       method: 'POST',
-      body: JSON.stringify(mergedArray)
+      body: JSON.stringify(data.purchases)
     });
     
     setSyncStatus('☁️ Sincronizado', '#10b981');
@@ -239,6 +249,39 @@ async function syncData() {
     isSyncing = false;
   }
 }
+
+// NUEVA FUNCIÓN: Limpiar Caché y Forzar Descarga
+document.getElementById('clearCacheBtn').onclick = async () => {
+  if(!data.scriptUrl) {
+    alert('Necesitas configurar la URL de la nube primero.');
+    return;
+  }
+  if(!confirm('⚠️ ¿Limpiar la memoria de este dispositivo y forzar una descarga limpia desde Google Sheets? \n\n(Usa esto si ves datos fantasmas duplicados)')) return;
+  
+  setSyncStatus('⏳ Limpiando caché...', '#fbbf24');
+  isSyncing = true;
+  try {
+    const res = await fetch(data.scriptUrl);
+    const cloudData = await res.json();
+    
+    cloudData.forEach(p => {
+       if (p.date && typeof p.date === 'string' && p.date.includes('T')) p.date = p.date.split('T')[0];
+    });
+
+    // Reemplazamos todo lo local con la copia exacta de la nube
+    data.purchases = cloudData;
+    data.lastSync = Date.now();
+    localStorage.setItem('tarjetaApp', JSON.stringify(data));
+    renderAll();
+    
+    setSyncStatus('☁️ Caché limpia y actualizada', '#10b981');
+  } catch (error) {
+    alert('Error al descargar. Revisa tu conexión a internet.');
+    setSyncStatus('⚠️ Offline', '#ef4444');
+  } finally {
+    isSyncing = false;
+  }
+};
 
 function save(){
   try{localStorage.setItem('tarjetaApp',JSON.stringify(data));}catch(e){}
@@ -256,7 +299,7 @@ function ymLabel(i){return MES[i%12]+' '+Math.floor(i/12);}
 
 function stmtOf(dateStr){
   if(!dateStr) return 0;
-  const cleanDate = dateStr.split('T')[0]; // Asegurar limpieza al calcular
+  const cleanDate = dateStr.split('T')[0]; 
   const [y,m,d]=cleanDate.split('-').map(Number);
   let i=y*12+(m-1);
   if(d>data.closing) i++;
@@ -363,7 +406,6 @@ function renderPurchases(){
 
   const groups = {};
   list.forEach(p => {
-    // Si por algún motivo la fecha sigue sucia al renderizar, la limpiamos al vuelo
     const cleanDate = (p.date && typeof p.date === 'string') ? p.date.split('T')[0] : p.date;
     const [y, m] = cleanDate.split('-');
     const monthKey = `${MES[parseInt(m)-1]} ${y}`;
@@ -430,7 +472,6 @@ function editComment(id){
   if(newComment !== null){
     p.comment = newComment.trim();
     save();
-    renderAll();
   }
 }
 
